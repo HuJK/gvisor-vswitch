@@ -1,0 +1,3 @@
+# Large test artifacts (downloaded by ../init_artifacts.sh) stay out of git.
+*
+!.gitignore
