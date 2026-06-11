@@ -68,6 +68,33 @@ func matchBinding(bindings []*StaticBinding, portID, mac, clientID string) *Stat
 	return best
 }
 
+// buildStaticSet validates a full binding set (unique non-empty IDs, family
+// check) and returns it as a map, for atomic replacement.
+func buildStaticSet(bs []StaticBinding, v6 bool) (map[string]*StaticBinding, error) {
+	m := make(map[string]*StaticBinding, len(bs))
+	for i := range bs {
+		b := bs[i]
+		if b.ID == "" {
+			return nil, fmt.Errorf("static binding needs an id")
+		}
+		if err := b.validate(); err != nil {
+			return nil, fmt.Errorf("binding %q: %w", b.ID, err)
+		}
+		if v6 {
+			if !b.IP.Is6() || b.IP.Is4In6() {
+				return nil, fmt.Errorf("binding %q: ip must be IPv6", b.ID)
+			}
+		} else if !b.IP.Is4() {
+			return nil, fmt.Errorf("binding %q: ip must be IPv4", b.ID)
+		}
+		if _, dup := m[b.ID]; dup {
+			return nil, fmt.Errorf("duplicate binding id %q", b.ID)
+		}
+		m[b.ID] = &b
+	}
+	return m, nil
+}
+
 // Lease is one address assignment.
 type Lease struct {
 	IP       netip.Addr

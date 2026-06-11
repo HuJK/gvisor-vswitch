@@ -203,6 +203,47 @@ func (m *Manager) DeleteForward(vlan int, id string) error {
 	return rec.gw.DeleteForward(id)
 }
 
+// ReplaceForwards declaratively reconciles the gateway's forward set.
+func (m *Manager) ReplaceForwards(vlan int, reqs []api.ForwardRequest) ([]api.ForwardInfo, error) {
+	rec, err := m.gateway(vlan)
+	if err != nil {
+		return nil, err
+	}
+	specs := make([]gateway.ForwardSpec, 0, len(reqs))
+	for _, r := range reqs {
+		specs = append(specs, gateway.ForwardSpec{
+			Type: r.Type, Network: r.Network, Bind: r.Bind, Host: r.Host,
+		})
+	}
+	frs, err := rec.gw.ReplaceForwards(specs)
+	out := make([]api.ForwardInfo, 0, len(frs))
+	for _, fr := range frs {
+		out = append(out, forwardInfo(fr))
+	}
+	return out, err
+}
+
+// ReplaceDHCPStatic atomically replaces a gateway's whole static-binding
+// set for one address family.
+func (m *Manager) ReplaceDHCPStatic(vlan, family int, bs []api.DHCPStaticBinding) error {
+	rec, err := m.gateway(vlan)
+	if err != nil {
+		return err
+	}
+	gbs := make([]gateway.StaticBinding, 0, len(bs))
+	for _, b := range bs {
+		gb, err := staticToGateway(b)
+		if err != nil {
+			return fmt.Errorf("binding %q: %w", b.ID, err)
+		}
+		gbs = append(gbs, gb)
+	}
+	if family == 4 {
+		return rec.gw.DHCP4().ReplaceStatics(gbs)
+	}
+	return rec.gw.DHCP6().ReplaceStatics(gbs)
+}
+
 func forwardInfo(fr gateway.ForwardRec) api.ForwardInfo {
 	return api.ForwardInfo{
 		ID: fr.ID,

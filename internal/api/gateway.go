@@ -142,10 +142,12 @@ type GatewayBackend interface {
 	AddForward(vlan int, req ForwardRequest) (ForwardInfo, error)
 	ListForwards(vlan int) ([]ForwardInfo, error)
 	DeleteForward(vlan int, id string) error
+	ReplaceForwards(vlan int, reqs []ForwardRequest) ([]ForwardInfo, error)
 
 	SetDHCP4(vlan int, cfg DHCP4Config) error
 	GetDHCP4(vlan int) (DHCP4Config, error)
 	PutDHCPStatic(vlan int, family int, b DHCPStaticBinding) error
+	ReplaceDHCPStatic(vlan int, family int, bs []DHCPStaticBinding) error
 	ListDHCPStatic(vlan int, family int) ([]DHCPStaticBinding, error)
 	DeleteDHCPStatic(vlan int, family int, id string) error
 	ListDHCPLeases(vlan int, family int) ([]LeaseInfo, error)
@@ -164,6 +166,7 @@ func registerGatewayRoutes(mux *http.ServeMux, h *handlers) {
 	mux.HandleFunc("DELETE /api/v1/gateways/{vlan}", h.gw(h.deleteGateway))
 
 	mux.HandleFunc("POST /api/v1/gateways/{vlan}/forwards", h.gw(h.addForward))
+	mux.HandleFunc("PUT /api/v1/gateways/{vlan}/forwards", h.gw(h.replaceForwards))
 	mux.HandleFunc("GET /api/v1/gateways/{vlan}/forwards", h.gw(h.listForwards))
 	mux.HandleFunc("DELETE /api/v1/gateways/{vlan}/forwards/{id}", h.gw(h.deleteForward))
 
@@ -177,6 +180,9 @@ func registerGatewayRoutes(mux *http.ServeMux, h *handlers) {
 		}))
 		mux.HandleFunc("PUT /api/v1/gateways/{vlan}/"+name+"/static/{id}", h.gw(func(w http.ResponseWriter, r *http.Request, vlan int) {
 			h.putDHCPStatic(w, r, vlan, family)
+		}))
+		mux.HandleFunc("PUT /api/v1/gateways/{vlan}/"+name+"/static", h.gw(func(w http.ResponseWriter, r *http.Request, vlan int) {
+			h.replaceDHCPStatic(w, r, vlan, family)
 		}))
 		mux.HandleFunc("GET /api/v1/gateways/{vlan}/"+name+"/static", h.gw(func(w http.ResponseWriter, r *http.Request, vlan int) {
 			h.listDHCPStatic(w, r, vlan, family)
@@ -255,6 +261,22 @@ func (h *handlers) addForward(w http.ResponseWriter, r *http.Request, vlan int) 
 	writeJSON(w, http.StatusCreated, info)
 }
 
+// replaceForwards is the declarative full-set update: PUT the desired list,
+// the backend reconciles (keeps matching rules alive, removes extras, adds
+// missing).
+func (h *handlers) replaceForwards(w http.ResponseWriter, r *http.Request, vlan int) {
+	var reqs []ForwardRequest
+	if !decodeBody(w, r, &reqs) {
+		return
+	}
+	infos, err := h.b.ReplaceForwards(vlan, reqs)
+	if err != nil {
+		writeErr(w, errCode(err), err)
+		return
+	}
+	writeJSON(w, http.StatusOK, infos)
+}
+
 func (h *handlers) listForwards(w http.ResponseWriter, r *http.Request, vlan int) {
 	infos, err := h.b.ListForwards(vlan)
 	if err != nil {
@@ -322,6 +344,20 @@ func (h *handlers) putDHCPStatic(w http.ResponseWriter, r *http.Request, vlan, f
 		return
 	}
 	writeJSON(w, http.StatusOK, b)
+}
+
+// replaceDHCPStatic atomically swaps the whole static-binding set (validated
+// first; nothing changes on error).
+func (h *handlers) replaceDHCPStatic(w http.ResponseWriter, r *http.Request, vlan, family int) {
+	var bs []DHCPStaticBinding
+	if !decodeBody(w, r, &bs) {
+		return
+	}
+	if err := h.b.ReplaceDHCPStatic(vlan, family, bs); err != nil {
+		writeErr(w, errCode(err), err)
+		return
+	}
+	writeJSON(w, http.StatusOK, bs)
 }
 
 func (h *handlers) listDHCPStatic(w http.ResponseWriter, r *http.Request, vlan, family int) {

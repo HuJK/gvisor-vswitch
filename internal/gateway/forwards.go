@@ -107,6 +107,62 @@ func (g *Gateway) DeleteForward(id string) error {
 	return nil
 }
 
+// ForwardSpec is the identity of a forward rule for declarative updates.
+type ForwardSpec struct {
+	Type    string
+	Network string
+	Bind    string
+	Host    string
+}
+
+func (s ForwardSpec) key() string {
+	return s.Type + "|" + s.Network + "|" + s.Bind + "|" + s.Host
+}
+
+// ReplaceForwards reconciles the installed forwards against the desired
+// set: rules matching an existing one (textual tuple match) are kept alive
+// (their listeners are not recreated and keep their IDs), extra rules are
+// removed, missing ones added. Returns the resulting set. On an add
+// failure the already-applied changes stay (re-PUT to converge); the error
+// names the failing rule.
+func (g *Gateway) ReplaceForwards(desired []ForwardSpec) ([]ForwardRec, error) {
+	want := make(map[string]ForwardSpec, len(desired))
+	for _, d := range desired {
+		if _, dup := want[d.key()]; dup {
+			return nil, fmt.Errorf("duplicate forward %s %s %s -> %s", d.Type, d.Network, d.Bind, d.Host)
+		}
+		want[d.key()] = d
+	}
+
+	// Pass 1: drop rules not in the desired set; note which are kept.
+	g.fwdMu.Lock()
+	var toDelete []string
+	have := make(map[string]bool)
+	for id, rec := range g.forwards {
+		k := ForwardSpec{rec.Type, rec.Network, rec.Bind, rec.Host}.key()
+		if _, keep := want[k]; keep && !have[k] {
+			have[k] = true
+		} else {
+			toDelete = append(toDelete, id)
+		}
+	}
+	g.fwdMu.Unlock()
+	for _, id := range toDelete {
+		g.DeleteForward(id)
+	}
+
+	// Pass 2: add what's missing.
+	for k, d := range want {
+		if have[k] {
+			continue
+		}
+		if _, err := g.AddForward(d.Type, d.Network, d.Bind, d.Host); err != nil {
+			return g.ListForwards(), fmt.Errorf("add %s %s %s -> %s: %w", d.Type, d.Network, d.Bind, d.Host, err)
+		}
+	}
+	return g.ListForwards(), nil
+}
+
 // ListForwards snapshots the installed forwards.
 func (g *Gateway) ListForwards() []ForwardRec {
 	g.fwdMu.Lock()

@@ -214,6 +214,12 @@ curl ... /api/v1/gateways/100/forwards -d '{
   "type": "remote", "network": "tcp", "bind": "10.0.100.2:25", "host": "127.0.0.1:1025"}'
 curl ... GET /api/v1/gateways/100/forwards
 curl -X DELETE .../forwards/fwd-1
+
+# 全量更新（宣告式）：PUT 想要的完整清單，後端 reconcile —
+# tuple 相同的規則原地保留（listener 不重建、ID 不變）、多的刪、少的補
+curl -X PUT /api/v1/gateways/100/forwards -d '[
+  {"type":"local","network":"tcp","bind":"0.0.0.0:8022","host":"10.0.100.50:22"},
+  {"type":"remote","network":"tcp","bind":"10.0.100.2:25","host":"127.0.0.1:1025"}]'
 ```
 
 #### DHCPv4 / DHCPv6
@@ -230,6 +236,11 @@ curl -X PUT .../gateways/100/dhcp4/static/web1 -d '{
   "ip": "10.0.100.10"}'
 curl ... GET .../dhcp4/static
 curl -X DELETE .../dhcp4/static/web1
+
+# 全量更新：PUT 完整清單原子換表（先全部驗證，失敗不動現有設定）
+curl -X PUT .../gateways/100/dhcp4/static -d '[
+  {"id":"web1","mac":"52:54:00:00:00:01","ip":"10.0.100.10"},
+  {"id":"db1","port_identifier":"vm2","ip":"10.0.100.11"}]'
 
 curl ... GET .../dhcp4/leases            # 活動租約（含 port_identifier）
 curl -X DELETE .../dhcp4/leases/10.0.100.100   # 強制回收

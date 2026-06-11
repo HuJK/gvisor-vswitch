@@ -24,8 +24,8 @@ type pump struct {
 
 func newPump(ref *switchcore.PortRef, io frameIO, onExit func()) *pump {
 	return &pump{
-		ref: ref,
-		io:  io,
+		ref:    ref,
+		io:     io,
 		txq:    make(chan []byte, txQueueLen),
 		done:   make(chan struct{}),
 		onExit: onExit,

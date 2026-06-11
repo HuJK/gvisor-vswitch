@@ -325,3 +325,105 @@ func TestGatewayLifecycle(t *testing.T) {
 }
 
 var _ = fmt.Sprintf
+
+func TestReplaceForwardsReconcile(t *testing.T) {
+	m, _ := setupGateway(t, 100)
+
+	// Seed: two forwards.
+	keep, err := m.AddForward(100, api.ForwardRequest{
+		Type: "remote", Network: "tcp", Bind: "10.0.99.2:25", Host: "127.0.0.1:1025"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.AddForward(100, api.ForwardRequest{
+		Type: "remote", Network: "tcp", Bind: "10.0.99.2:26", Host: "127.0.0.1:1026"}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Desired set: keep :25, drop :26, add :27.
+	out, err := m.ReplaceForwards(100, []api.ForwardRequest{
+		{Type: "remote", Network: "tcp", Bind: "10.0.99.2:25", Host: "127.0.0.1:1025"},
+		{Type: "remote", Network: "tcp", Bind: "10.0.99.2:27", Host: "127.0.0.1:1027"},
+	})
+	if err != nil {
+		t.Fatalf("ReplaceForwards: %v", err)
+	}
+	if len(out) != 2 {
+		t.Fatalf("result = %+v, want 2 rules", out)
+	}
+	binds := map[string]string{}
+	for _, f := range out {
+		binds[f.Bind] = f.ID
+	}
+	if _, ok := binds["10.0.99.2:26"]; ok {
+		t.Error(":26 not removed")
+	}
+	if _, ok := binds["10.0.99.2:27"]; !ok {
+		t.Error(":27 not added")
+	}
+	// The kept rule was not recreated: same ID.
+	if binds["10.0.99.2:25"] != keep.ID {
+		t.Errorf("kept rule recreated: id %s -> %s", keep.ID, binds["10.0.99.2:25"])
+	}
+
+	// Duplicate tuples rejected.
+	if _, err := m.ReplaceForwards(100, []api.ForwardRequest{
+		{Type: "remote", Network: "tcp", Bind: "10.0.99.2:25", Host: "127.0.0.1:1025"},
+		{Type: "remote", Network: "tcp", Bind: "10.0.99.2:25", Host: "127.0.0.1:1025"},
+	}); err == nil {
+		t.Error("duplicate desired tuple accepted")
+	}
+
+	// Empty set clears everything.
+	out, err = m.ReplaceForwards(100, nil)
+	if err != nil || len(out) != 0 {
+		t.Fatalf("clear: %v %+v", err, out)
+	}
+}
+
+func TestReplaceDHCPStatic(t *testing.T) {
+	m, _ := setupGateway(t, 100)
+	mac1, mac2 := "02:00:00:00:00:01", "02:00:00:00:00:02"
+
+	if err := m.ReplaceDHCPStatic(100, 4, []api.DHCPStaticBinding{
+		{ID: "a", MAC: &mac1, IP: "10.0.99.10"},
+		{ID: "b", MAC: &mac2, IP: "10.0.99.11"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	bs, _ := m.ListDHCPStatic(100, 4)
+	if len(bs) != 2 {
+		t.Fatalf("statics = %+v", bs)
+	}
+
+	// Replace with a single different set: old entries gone.
+	if err := m.ReplaceDHCPStatic(100, 4, []api.DHCPStaticBinding{
+		{ID: "c", MAC: &mac1, IP: "10.0.99.12"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	bs, _ = m.ListDHCPStatic(100, 4)
+	if len(bs) != 1 || bs[0].ID != "c" {
+		t.Fatalf("statics after replace = %+v", bs)
+	}
+
+	// Validation failure leaves the current set untouched.
+	if err := m.ReplaceDHCPStatic(100, 4, []api.DHCPStaticBinding{
+		{ID: "x", MAC: &mac1, IP: "10.0.99.13"},
+		{ID: "x", MAC: &mac2, IP: "10.0.99.14"}, // duplicate id
+	}); err == nil {
+		t.Fatal("duplicate ids accepted")
+	}
+	bs, _ = m.ListDHCPStatic(100, 4)
+	if len(bs) != 1 || bs[0].ID != "c" {
+		t.Fatalf("set changed despite validation failure: %+v", bs)
+	}
+
+	// Empty set clears.
+	if err := m.ReplaceDHCPStatic(100, 4, nil); err != nil {
+		t.Fatal(err)
+	}
+	if bs, _ = m.ListDHCPStatic(100, 4); len(bs) != 0 {
+		t.Fatalf("statics not cleared: %+v", bs)
+	}
+}

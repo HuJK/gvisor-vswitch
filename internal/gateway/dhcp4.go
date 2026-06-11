@@ -127,6 +127,18 @@ func (s *dhcp4Server) PutStatic(b StaticBinding) error {
 	return nil
 }
 
+// ReplaceStatics atomically replaces the entire static-binding set.
+func (s *dhcp4Server) ReplaceStatics(bs []StaticBinding) error {
+	m, err := buildStaticSet(bs, false)
+	if err != nil {
+		return err
+	}
+	s.mu.Lock()
+	s.statics = m
+	s.mu.Unlock()
+	return nil
+}
+
 func (s *dhcp4Server) ListStatic() []StaticBinding {
 	s.mu.Lock()
 	defer s.mu.Unlock()
