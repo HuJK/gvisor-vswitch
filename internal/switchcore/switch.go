@@ -21,7 +21,27 @@ type portEntry struct {
 	// gone flips when the entry is unregistered, invalidating cached
 	// PortRef pointers.
 	gone atomic.Bool
+
+	// blockReason explains an automatic shutdown (bpdu_guard / loop);
+	// guarded by Switch.mu. Cleared when the port is re-enabled.
+	blockReason string
+	// storm is the flooded-ingress rate limiter.
+	storm stormBucket
+	// stpState gates the dataplane; zero value (forwarding) keeps
+	// non-participating ports unaffected.
+	stpState atomic.Uint32
+	// portNum is a small stable number used in the STP port ID.
+	portNum uint16
 }
+
+// STP dataplane states (zero value = forwarding so that ports outside the
+// spanning tree behave normally).
+const (
+	stpForwarding uint32 = iota
+	stpBlocking
+	stpListening
+	stpLearning
+)
 
 // PortRef is a port's fast handle into the switch: Deliver resolves the
 // port-registry entry once and then reuses the pointer, so the per-frame
@@ -56,16 +76,18 @@ func (r *PortRef) Deliver(frame []byte) {
 type portCounters struct {
 	rxFrames, rxBytes, rxDropped atomic.Uint64
 	txFrames, txBytes, txDropped atomic.Uint64
+	stormDropped                 atomic.Uint64
 }
 
 func (c *portCounters) snapshot() PortStats {
 	return PortStats{
-		RxFrames:  c.rxFrames.Load(),
-		RxBytes:   c.rxBytes.Load(),
-		RxDropped: c.rxDropped.Load(),
-		TxFrames:  c.txFrames.Load(),
-		TxBytes:   c.txBytes.Load(),
-		TxDropped: c.txDropped.Load(),
+		RxFrames:     c.rxFrames.Load(),
+		RxBytes:      c.rxBytes.Load(),
+		RxDropped:    c.rxDropped.Load(),
+		TxFrames:     c.txFrames.Load(),
+		TxBytes:      c.txBytes.Load(),
+		TxDropped:    c.txDropped.Load(),
+		StormDropped: c.stormDropped.Load(),
 	}
 }
 
@@ -77,6 +99,12 @@ type Switch struct {
 
 	fdb *fdb
 
+	instanceID     uint64
+	loopProbeNanos atomic.Int64
+	portNumSeq     uint16
+
+	stp *stpBridge
+
 	downMu sync.RWMutex
 	downCB []func(portID string)
 
@@ -86,11 +114,16 @@ type Switch struct {
 
 func New() *Switch {
 	s := &Switch{
-		ports: make(map[string]*portEntry),
-		fdb:   newFDB(defaultFDBMaxAge),
-		stop:  make(chan struct{}),
+		ports:      make(map[string]*portEntry),
+		fdb:        newFDB(defaultFDBMaxAge),
+		stop:       make(chan struct{}),
+		instanceID: newInstanceID(),
 	}
+	s.loopProbeNanos.Store(int64(defaultLoopProbeInterval))
+	s.stp = newSTPBridge(s)
 	go s.ageLoop()
+	go s.loopProbeLoop()
+	go s.stp.run()
 	return s
 }
 
@@ -133,7 +166,10 @@ func (s *Switch) AddPort(p Port, attrs PortAttrs) error {
 	if _, dup := s.ports[id]; dup {
 		return fmt.Errorf("port %q already exists", id)
 	}
-	s.ports[id] = &portEntry{id: id, port: p, attrs: attrs}
+	s.portNumSeq++
+	e := &portEntry{id: id, port: p, attrs: attrs, portNum: s.portNumSeq}
+	s.ports[id] = e
+	s.stp.portChangedLocked(e)
 	return nil
 }
 
@@ -203,7 +239,11 @@ func (s *Switch) UpdatePortAttrs(id string, attrs PortAttrs) error {
 		return fmt.Errorf("port %q not found", id)
 	}
 	vlanChanged := e.attrs.VLAN != attrs.VLAN
+	if e.attrs.Disabled && !attrs.Disabled {
+		e.blockReason = "" // manual re-enable clears guard/loop blocks
+	}
 	e.attrs = attrs
+	s.stp.portChangedLocked(e)
 	s.mu.Unlock()
 	if vlanChanged {
 		s.fdb.flushPort(id)
@@ -341,6 +381,41 @@ func (s *Switch) deliver(src *portEntry, frame []byte) {
 		return
 	}
 
+	dstMAC := f.dstMAC()
+
+	// One of our own loop probes came back: there is a loop through this
+	// port; shut it.
+	if dstMAC == loopProbeDst && s.isOwnLoopProbe(frame) {
+		s.mu.RUnlock()
+		s.blockPort(src, "loop")
+		return
+	}
+
+	// 802.1D reserved group addresses are consumed by the bridge, never
+	// forwarded. BPDUs feed the spanning tree or trip the guard.
+	if isReservedGroupMAC(dstMAC) {
+		guard := srcAttrs.BPDUGuard && isBPDU(dstMAC, frame)
+		stpPort := srcAttrs.STP && isBPDU(dstMAC, frame)
+		s.mu.RUnlock()
+		if guard {
+			s.blockPort(src, "bpdu_guard")
+			return
+		}
+		if stpPort {
+			s.stp.handleBPDU(src, frame)
+		}
+		return
+	}
+
+	// STP ingress gate: blocking/listening ports drop everything;
+	// learning ports learn below but do not forward.
+	stpState := src.stpState.Load()
+	if stpState == stpBlocking || stpState == stpListening {
+		src.stats.rxDropped.Add(1)
+		s.mu.RUnlock()
+		return
+	}
+
 	key, ok := ingressKey(srcAttrs, f)
 	if !ok {
 		src.stats.rxDropped.Add(1)
@@ -362,6 +437,11 @@ func (s *Switch) deliver(src *portEntry, frame []byte) {
 	if !isMulticast(srcMAC) {
 		s.fdb.learn(key, srcMAC, src)
 	}
+	if stpState == stpLearning {
+		src.stats.rxDropped.Add(1)
+		s.mu.RUnlock()
+		return
+	}
 
 	v := frameVariants{f: f, key: key}
 	meta := Meta{SrcPortID: srcID}
@@ -376,14 +456,14 @@ func (s *Switch) deliver(src *portEntry, frame []byte) {
 		}
 	}
 
-	dstMAC := f.dstMAC()
 	if !isMulticast(dstMAC) {
 		if dst, dstID := s.fdb.lookup(key, dstMAC); dstID != "" {
 			if dst == nil {
 				// Static entry: resolve by ID (the port may not exist).
 				dst = s.ports[dstID]
 			}
-			if dst != nil && dst.id != srcID && !dst.gone.Load() && egressEligible(srcAttrs, dst.attrs, key) {
+			if dst != nil && dst.id != srcID && !dst.gone.Load() &&
+				dst.stpState.Load() == stpForwarding && egressEligible(srcAttrs, dst.attrs, key) {
 				send(dst)
 			}
 			s.mu.RUnlock()
@@ -391,9 +471,16 @@ func (s *Switch) deliver(src *portEntry, frame []byte) {
 		}
 	}
 
-	// Broadcast, multicast, or unknown unicast: flood.
+	// Broadcast, multicast, or unknown unicast: flood, bounded by the
+	// source port's storm budget.
+	if srcAttrs.StormPPS > 0 && !src.storm.allow(srcAttrs.StormPPS) {
+		src.stats.rxDropped.Add(1)
+		src.stats.stormDropped.Add(1)
+		s.mu.RUnlock()
+		return
+	}
 	for id, dst := range s.ports {
-		if id == srcID || !egressEligible(srcAttrs, dst.attrs, key) {
+		if id == srcID || dst.stpState.Load() != stpForwarding || !egressEligible(srcAttrs, dst.attrs, key) {
 			continue
 		}
 		send(dst)

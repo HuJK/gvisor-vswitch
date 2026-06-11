@@ -11,6 +11,7 @@ import (
 // Config is the optional startup configuration: a declarative list of
 // resources replayed through the same code paths as the REST API.
 type Config struct {
+	STP      *api.STPRequest   `json:"stp,omitempty"`
 	Ports    []api.PortRequest `json:"ports,omitempty"`
 	Gateways []GatewayConfig   `json:"gateways,omitempty"`
 }
@@ -35,6 +36,12 @@ func (m *Manager) ReplayConfig(path string) error {
 	var cfg Config
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		return fmt.Errorf("parse config: %w", err)
+	}
+
+	if cfg.STP != nil {
+		if err := m.SetSTP(*cfg.STP); err != nil {
+			return fmt.Errorf("stp: %w", err)
+		}
 	}
 
 	for _, gw := range cfg.Gateways {

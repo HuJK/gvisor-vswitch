@@ -48,6 +48,9 @@ type Backend interface {
 	GetFDBConfig() FDBConfig
 	SetFDBConfig(cfg FDBConfig) error
 
+	SetSTP(req STPRequest) error
+	GetSTP() STPResponse
+
 	GatewayBackend
 }
 
@@ -117,6 +120,8 @@ func NewHandler(b Backend) http.Handler {
 	mux.HandleFunc("DELETE /api/v1/fdb/static/{vlan}/{mac}", h.deleteStaticFDB)
 	mux.HandleFunc("GET /api/v1/fdb/config", h.getFDBConfig)
 	mux.HandleFunc("PUT /api/v1/fdb/config", h.setFDBConfig)
+	mux.HandleFunc("GET /api/v1/stp", h.getSTP)
+	mux.HandleFunc("PUT /api/v1/stp", h.setSTP)
 
 	registerGatewayRoutes(mux, h)
 	return mux
@@ -301,6 +306,22 @@ func (h *handlers) deleteStaticFDB(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *handlers) getSTP(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, h.b.GetSTP())
+}
+
+func (h *handlers) setSTP(w http.ResponseWriter, r *http.Request) {
+	var req STPRequest
+	if !decodeBody(w, r, &req) {
+		return
+	}
+	if err := h.b.SetSTP(req); err != nil {
+		writeErr(w, errCode(err), err)
+		return
+	}
+	writeJSON(w, http.StatusOK, h.b.GetSTP())
 }
 
 func (h *handlers) getFDBConfig(w http.ResponseWriter, r *http.Request) {

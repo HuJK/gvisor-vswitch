@@ -300,6 +300,35 @@ VM 內 DHCP 拿 IP、`ping 10.0.100.2`、對外連線即可驗證。
 }
 ```
 
+### 防迴圈與 STP
+
+四層防護（前三項 per-port 參數，與 STP 獨立可用）：
+
+| 機制 | 參數 | 行為 |
+|---|---|---|
+| 保留 MAC 過濾 | （恆開） | `01:80:C2:00:00:00~0F` 永不轉發（802.1D 規範），BPDU 交給 STP 或 guard |
+| BPDU guard | `"bpdu_guard": true` | 收到 BPDU 即自動停用 port（`blocked_reason: "bpdu_guard"`），擋 VM 內部亂接 bridge；PATCH `enabled:true` 解除 |
+| Storm control | `"storm_pps": 1000` | 該 port 的 flood ingress（broadcast/multicast/未知 unicast）限速，超出丟棄並計入 `storm_dropped` |
+| 自環探測 | `"loop_detect": true` | 週期送探測 frame（預設 2s），從任何 port 收回自己的探測 = 有迴圈 → 自動停用該 port（`blocked_reason: "loop"`） |
+
+Classic 802.1D STP（單樹）：
+
+```sh
+# bridge 層：啟用 + root 選舉優先權（也可用 CLI -stp -stp-priority=4096）
+curl -X PUT /api/v1/stp -d '{"enabled":true,"priority":4096}'
+curl ... GET /api/v1/stp     # bridge_id/root_id/is_root/root_port + 各 port state/role
+
+# port 層：uplink 加入樹（VM port 不要開 stp，開 bpdu_guard）
+curl ... /api/v1/ports -d '{"identifier":"up1","mode":"client","transport":"tap",
+  "tap_name":"up1","stp":true,"stp_cost":100,"stp_priority":128}'
+```
+
+語義：port 加入樹後從 Blocking 起步，經 Listening→Learning→Forwarding
+（各一個 forward_delay，預設 15s）；冗餘鏈路會有恰好一個 port 停在
+Blocking；鏈路失效後 max_age（預設 20s）逾時自動切換備援。支援 TCN/TC
+（拓撲變化觸發 FDB fast-age）。計時器可調（hello/max_age/forward_delay），
+與實體交換機的 802.1D 可互通。RSTP 未實作（收斂較慢是已知 trade-off）。
+
 ## 轉發引擎
 
 - FDB 是 `map[{vlan int32, mac [6]byte}]entry` 雜湊表 — 定長 struct key，

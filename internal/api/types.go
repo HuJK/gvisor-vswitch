@@ -57,6 +57,14 @@ type PortRequest struct {
 	// the RX queue to bind, default 0).
 	Interface string `json:"interface,omitempty"`
 	QueueID   int    `json:"queue_id,omitempty"`
+
+	// Loop protection / spanning tree.
+	BPDUGuard   bool   `json:"bpdu_guard,omitempty"`   // BPDU received -> port auto-disabled
+	LoopDetect  bool   `json:"loop_detect,omitempty"`  // send loop probes out this port
+	StormPPS    uint32 `json:"storm_pps,omitempty"`    // flooded-ingress rate limit (0 = off)
+	STP         bool   `json:"stp,omitempty"`          // participate in spanning tree
+	STPCost     uint32 `json:"stp_cost,omitempty"`     // path cost (default 100)
+	STPPriority uint8  `json:"stp_priority,omitempty"` // port priority (default 128)
 }
 
 // Attrs converts the request's policy fields. An omitted vlan defaults to
@@ -79,6 +87,12 @@ func (r *PortRequest) Attrs() (switchcore.PortAttrs, error) {
 	if r.Enabled != nil {
 		attrs.Disabled = !*r.Enabled
 	}
+	attrs.BPDUGuard = r.BPDUGuard
+	attrs.LoopDetect = r.LoopDetect
+	attrs.StormPPS = r.StormPPS
+	attrs.STP = r.STP
+	attrs.STPCost = r.STPCost
+	attrs.STPPriority = r.STPPriority
 	return attrs, nil
 }
 
@@ -90,6 +104,13 @@ type PortPatch struct {
 	Isolated     *bool           `json:"isolated,omitempty"`
 	PortSecurity json.RawMessage `json:"port_security,omitempty"`
 	Enabled      *bool           `json:"enabled,omitempty"`
+
+	BPDUGuard   *bool   `json:"bpdu_guard,omitempty"`
+	LoopDetect  *bool   `json:"loop_detect,omitempty"`
+	StormPPS    *uint32 `json:"storm_pps,omitempty"`
+	STP         *bool   `json:"stp,omitempty"`
+	STPCost     *uint32 `json:"stp_cost,omitempty"`
+	STPPriority *uint8  `json:"stp_priority,omitempty"`
 }
 
 // Apply merges the patch into attrs.
@@ -102,6 +123,24 @@ func (p *PortPatch) Apply(attrs switchcore.PortAttrs) (switchcore.PortAttrs, err
 	}
 	if p.Enabled != nil {
 		attrs.Disabled = !*p.Enabled
+	}
+	if p.BPDUGuard != nil {
+		attrs.BPDUGuard = *p.BPDUGuard
+	}
+	if p.LoopDetect != nil {
+		attrs.LoopDetect = *p.LoopDetect
+	}
+	if p.StormPPS != nil {
+		attrs.StormPPS = *p.StormPPS
+	}
+	if p.STP != nil {
+		attrs.STP = *p.STP
+	}
+	if p.STPCost != nil {
+		attrs.STPCost = *p.STPCost
+	}
+	if p.STPPriority != nil {
+		attrs.STPPriority = *p.STPPriority
 	}
 	if p.PortSecurity != nil {
 		var s *string
@@ -139,6 +178,18 @@ type PortInfo struct {
 	Bridge        string `json:"bridge,omitempty"`
 	Interface     string `json:"interface,omitempty"`
 	QueueID       int    `json:"queue_id,omitempty"`
+
+	BPDUGuard   bool   `json:"bpdu_guard"`
+	LoopDetect  bool   `json:"loop_detect"`
+	StormPPS    uint32 `json:"storm_pps"`
+	STP         bool   `json:"stp"`
+	STPCost     uint32 `json:"stp_cost,omitempty"`
+	STPPriority uint8  `json:"stp_priority,omitempty"`
+	// STPState/STPRole reflect the spanning tree ("-" when not
+	// participating); BlockedReason is set by bpdu_guard / loop detection.
+	STPState      string `json:"stp_state,omitempty"`
+	STPRole       string `json:"stp_role,omitempty"`
+	BlockedReason string `json:"blocked_reason,omitempty"`
 
 	Online      bool     `json:"online"`
 	Peer        string   `json:"peer,omitempty"`

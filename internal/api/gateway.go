@@ -132,6 +132,21 @@ type SLAACConfig struct {
 	Prefixes              []RAPrefix `json:"prefixes,omitempty"`
 }
 
+// STPRequest configures the bridge-wide spanning tree.
+type STPRequest struct {
+	Enabled             bool   `json:"enabled"`
+	Priority            uint16 `json:"priority,omitempty"`              // default 32768
+	HelloSeconds        int    `json:"hello_seconds,omitempty"`         // default 2
+	MaxAgeSeconds       int    `json:"max_age_seconds,omitempty"`       // default 20
+	ForwardDelaySeconds int    `json:"forward_delay_seconds,omitempty"` // default 15
+}
+
+// STPResponse is the bridge status plus per-port tree state.
+type STPResponse struct {
+	switchcore.STPStatus
+	Ports map[string]switchcore.STPPortStatus `json:"ports"`
+}
+
 // GatewayBackend is the gateway half of the API surface.
 type GatewayBackend interface {
 	CreateGateway(req GatewayRequest) (GatewayInfo, error)

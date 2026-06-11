@@ -287,7 +287,18 @@ func (m *Manager) portInfoLocked(id string) (api.PortInfo, error) {
 	if attrs, ok := m.sw.PortAttrs(id); ok {
 		info.Enabled = !attrs.Disabled
 		info.VLAN = attrs.VLAN
+		info.BPDUGuard = attrs.BPDUGuard
+		info.LoopDetect = attrs.LoopDetect
+		info.StormPPS = attrs.StormPPS
+		info.STP = attrs.STP
+		info.STPCost = attrs.STPCost
+		info.STPPriority = attrs.STPPriority
 	}
+	if st, ok := m.sw.STPPortStatus(id); ok {
+		info.STPState = st.State
+		info.STPRole = st.Role
+	}
+	info.BlockedReason = m.sw.BlockReason(id)
 	if stats, ok := m.sw.PortStats(id); ok {
 		info.Stats = stats
 	}

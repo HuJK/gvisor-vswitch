@@ -466,3 +466,62 @@ func TestAutoRemoveOnPeerClose(t *testing.T) {
 	}
 	conn3.Close()
 }
+
+func TestSTPAPI(t *testing.T) {
+	srv, _ := newAPI(t)
+	sock := filepath.Join(t.TempDir(), "up.sock")
+
+	// Enable STP bridge-wide.
+	resp, body := doJSON(t, "PUT", srv.URL+"/api/v1/stp", api.STPRequest{
+		Enabled: true, Priority: 8192,
+	})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("put stp: %d %s", resp.StatusCode, body)
+	}
+	var st api.STPResponse
+	json.Unmarshal(body, &st)
+	if !st.Enabled || !st.IsRoot || st.Priority != 8192 || st.BridgeID == "" {
+		t.Fatalf("stp status = %s", body)
+	}
+
+	// A participating port appears in tree state (starts non-forwarding).
+	vlan := 4095
+	resp, body = doJSON(t, "POST", srv.URL+"/api/v1/ports", api.PortRequest{
+		Identifier: "uplink", VLAN: &vlan, Mode: "server", Transport: "unix",
+		Local: sock, STP: true, STPCost: 50,
+	})
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create: %d %s", resp.StatusCode, body)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		_, body = doJSON(t, "GET", srv.URL+"/api/v1/ports/uplink", nil)
+		var info api.PortInfo
+		json.Unmarshal(body, &info)
+		if info.STP && info.STPState != "" && info.STPState != "-" {
+			if info.STPState == "forwarding" {
+				t.Fatalf("fresh STP port already forwarding: %s", body)
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("port never joined the tree: %s", body)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	_, body = doJSON(t, "GET", srv.URL+"/api/v1/stp", nil)
+	json.Unmarshal(body, &st)
+	if _, ok := st.Ports["uplink"]; !ok {
+		t.Fatalf("uplink missing from stp ports: %s", body)
+	}
+
+	// Disable: port returns to plain forwarding.
+	doJSON(t, "PUT", srv.URL+"/api/v1/stp", api.STPRequest{Enabled: false})
+	_, body = doJSON(t, "GET", srv.URL+"/api/v1/ports/uplink", nil)
+	var info api.PortInfo
+	json.Unmarshal(body, &info)
+	if info.STPState != "" && info.STPState != "-" && info.STPState != "forwarding" {
+		t.Fatalf("port still gated after stp disable: %s", body)
+	}
+}

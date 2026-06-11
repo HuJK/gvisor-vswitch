@@ -48,6 +48,26 @@ type PortAttrs struct {
 	VLAN int
 	// Disabled administratively shuts the port: no frames in or out.
 	Disabled bool
+
+	// BPDUGuard shuts the port down (with a block reason) when it
+	// receives a BPDU — protection against guests bridging their NICs.
+	BPDUGuard bool
+	// LoopDetect makes the switch send loop probes out this port and
+	// block any port the probe comes back in on.
+	LoopDetect bool
+	// StormPPS, when non-zero, rate-limits flooded ingress (broadcast,
+	// multicast, unknown unicast) from this port to that many frames per
+	// second.
+	StormPPS uint32
+
+	// STP makes the port participate in spanning tree (when the bridge
+	// has STP enabled). Non-participating ports always forward and have
+	// their BPDUs dropped (or guarded).
+	STP bool
+	// STPCost is the port path cost (default 100).
+	STPCost uint32
+	// STPPriority is the port priority for the STP port ID (default 128).
+	STPPriority uint8
 }
 
 // PortStats are per-port traffic counters (frames the switch saw from and
@@ -59,6 +79,8 @@ type PortStats struct {
 	TxFrames  uint64 `json:"tx_frames"`
 	TxBytes   uint64 `json:"tx_bytes"`
 	TxDropped uint64 `json:"tx_dropped"`
+	// StormDropped counts flooded ingress dropped by storm control.
+	StormDropped uint64 `json:"storm_dropped"`
 }
 
 func (a PortAttrs) validate() error {

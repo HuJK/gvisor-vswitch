@@ -19,14 +19,18 @@ func main() {
 
 func run() int {
 	var (
-		listen     string
-		configPath string
-		authToken  string
+		listen      string
+		configPath  string
+		authToken   string
+		stpEnable   bool
+		stpPriority uint
 	)
 	flag.StringVar(&listen, "listen", "", "control socket: \"ip:port\" = tcp4, \"[ip]:port\" = tcp6, otherwise a unix socket path")
 	flag.StringVar(&configPath, "config", "", "optional JSON config replayed at startup")
 	flag.StringVar(&authToken, "auth-token", os.Getenv("GVSWITCH_AUTH_TOKEN"),
 		"require `Authorization: Bearer <token>` on the API (default: $GVSWITCH_AUTH_TOKEN; empty = no auth)")
+	flag.BoolVar(&stpEnable, "stp", false, "enable spanning tree (802.1D) with default timers; ports join via stp:true")
+	flag.UintVar(&stpPriority, "stp-priority", 32768, "bridge priority for STP root election")
 	flag.Parse()
 
 	if listen == "" {
@@ -37,6 +41,13 @@ func run() int {
 
 	m := manager.New()
 	defer m.Close()
+
+	if stpEnable {
+		if err := m.SetSTP(api.STPRequest{Enabled: true, Priority: uint16(stpPriority)}); err != nil {
+			fmt.Fprintf(os.Stderr, "[!] stp: %v\n", err)
+			return 1
+		}
+	}
 
 	if configPath != "" {
 		if err := m.ReplayConfig(configPath); err != nil {
