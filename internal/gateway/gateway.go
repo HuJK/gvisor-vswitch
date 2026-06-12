@@ -203,9 +203,25 @@ func New(sw *switchcore.Switch, cfg Config) (*Gateway, error) {
 	fwdUdp := udp.NewForwarder(s, sns.DynUdpRoutingHandler(s, state, g.fwdTable, dnsProxy))
 	s.SetTransportProtocolHandler(udp.ProtocolNumber, fwdUdp.HandlePacket)
 
-	// Answer ICMP echo only for the gateway's own addresses.
+	// ICMP echo: answer for the gateway's own addresses (the netstack
+	// synthesizes the reply) and relay everything else to the real network
+	// through the slirpnetstack PingForwarder (host ping sockets with TTL
+	// passthrough and ICMP error translation, so ping and ICMP traceroute
+	// work through the gateway, subject to the same routing firewall as
+	// TCP/UDP).
+	var gwAddr4, gwAddr6 tcpip.Address
+	if cfg.IPv4 != nil {
+		gwAddr4 = tcpip.AddrFromSlice(cfg.IPv4.Address.To4())
+	}
+	if cfg.IPv6 != nil {
+		gwAddr6 = tcpip.AddrFromSlice(cfg.IPv6.Address.To16())
+	}
+	pingFwd := sns.NewPingForwarder(s, nicID, state, gwAddr4, gwAddr6)
 	icmpEchoHandler := func(id stack.TransportEndpointID, pkt *stack.PacketBuffer) bool {
-		return !gwAddrs.Has(id.LocalAddress)
+		if gwAddrs.Has(id.LocalAddress) {
+			return false
+		}
+		return pingFwd.HandlePacket(id, pkt)
 	}
 	s.SetTransportProtocolHandler(icmp.ProtocolNumber4, icmpEchoHandler)
 	s.SetTransportProtocolHandler(icmp.ProtocolNumber6, icmpEchoHandler)
