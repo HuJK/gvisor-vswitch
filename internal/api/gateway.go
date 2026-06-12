@@ -27,6 +27,11 @@ type GatewayRequest struct {
 	EnableHostRouting     bool     `json:"enable_host_routing,omitempty"`
 	Allow                 []string `json:"allow,omitempty"` // ip/cidr[:portmin-portmax]
 	Deny                  []string `json:"deny,omitempty"`
+
+	// DNSProxy: answer DNS on the gateway's own :53 by resolving through
+	// the host system's resolver (Android: DnsResolver via dnsproxyd, so
+	// Private DNS/VPN DNS apply; elsewhere: /etc/resolv.conf upstreams).
+	DNSProxy bool `json:"dns_proxy,omitempty"`
 }
 
 // GatewayV4 is the gateway's IPv4 side: it owns Address/PrefixLen and NATs

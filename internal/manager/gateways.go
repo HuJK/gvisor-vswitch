@@ -47,6 +47,7 @@ func (m *Manager) CreateGateway(req api.GatewayRequest) (api.GatewayInfo, error)
 		EnableHostRouting:     req.EnableHostRouting,
 		Allow:                 req.Allow,
 		Deny:                  req.Deny,
+		DNSProxy:              req.DNSProxy,
 	}
 	if req.MAC != "" {
 		mac, err := net.ParseMAC(req.MAC)

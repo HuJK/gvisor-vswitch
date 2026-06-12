@@ -202,8 +202,9 @@ func (t *DynFwdTable) List() map[string]map[string]*FwdAddr {
 }
 
 // DynUdpRoutingHandler is UdpRoutingHandler (routing.go) with the static
-// remote-forward map swapped for a DynFwdTable.
-func DynUdpRoutingHandler(s *stack.Stack, state *State, t *DynFwdTable) func(*udp.ForwarderRequest) bool {
+// remote-forward map swapped for a DynFwdTable and an optional DNS proxy
+// serving the gateway's own :53 (explicit forward rules take precedence).
+func DynUdpRoutingHandler(s *stack.Stack, state *State, t *DynFwdTable, dns *DNSProxy) func(*udp.ForwarderRequest) bool {
 	return func(r *udp.ForwarderRequest) bool {
 		var wq waiter.Queue
 		ep, err := r.CreateEndpoint(&wq)
@@ -219,6 +220,10 @@ func DynUdpRoutingHandler(s *stack.Stack, state *State, t *DynFwdTable) func(*ud
 		}
 
 		rf := t.lookup("udp", loc.String())
+		if rf == nil && dns != nil && dns.Matches(loc.IP, loc.Port) {
+			go dns.ServeUDP(gonet.NewUDPConn(&wq, ep))
+			return true
+		}
 		if rf == nil {
 			if block := FirewallRoutingBlock(state, loc); block {
 				ep.Close()
@@ -245,8 +250,9 @@ func DynUdpRoutingHandler(s *stack.Stack, state *State, t *DynFwdTable) func(*ud
 }
 
 // DynTcpRoutingHandler is TcpRoutingHandler (routing.go) with the static
-// remote-forward map swapped for a DynFwdTable.
-func DynTcpRoutingHandler(state *State, t *DynFwdTable) func(*tcp.ForwarderRequest) {
+// remote-forward map swapped for a DynFwdTable and an optional DNS proxy
+// serving the gateway's own :53 (explicit forward rules take precedence).
+func DynTcpRoutingHandler(state *State, t *DynFwdTable, dns *DNSProxy) func(*tcp.ForwarderRequest) {
 	return func(r *tcp.ForwarderRequest) {
 		id := r.ID()
 		loc := &net.TCPAddr{
@@ -255,7 +261,8 @@ func DynTcpRoutingHandler(state *State, t *DynFwdTable) func(*tcp.ForwarderReque
 		}
 
 		rf := t.lookup("tcp", loc.String())
-		if rf == nil {
+		serveDNS := rf == nil && dns != nil && dns.Matches(loc.IP, loc.Port)
+		if rf == nil && !serveDNS {
 			if block := FirewallRoutingBlock(state, loc); block {
 				r.Complete(true)
 				return
@@ -273,6 +280,11 @@ func DynTcpRoutingHandler(state *State, t *DynFwdTable) func(*tcp.ForwarderReque
 
 		xconn := gonet.NewTCPConn(&wq, ep)
 		conn := &GonetTCPConn{xconn, ep}
+
+		if serveDNS {
+			go dns.ServeTCP(conn)
+			return
+		}
 
 		go func() {
 			if rf != nil {

@@ -57,6 +57,10 @@ type Config struct {
 	EnableHostRouting     bool
 	Allow                 []string
 	Deny                  []string
+
+	// DNSProxy: serve DNS on the gateway addresses :53 through the host
+	// system resolver.
+	DNSProxy bool
 }
 
 // FrameHandler inspects an ingress frame before it reaches the netstack
@@ -179,10 +183,24 @@ func New(sw *switchcore.Switch, cfg Config) (*Gateway, error) {
 	}
 	g.ctx, g.cancel = context.WithCancel(context.Background())
 
+	var dnsProxy *sns.DNSProxy
+	if cfg.DNSProxy {
+		var dnsIPs []net.IP
+		if cfg.IPv4 != nil {
+			dnsIPs = append(dnsIPs, cfg.IPv4.Address)
+		}
+		if cfg.IPv6 != nil {
+			dnsIPs = append(dnsIPs, cfg.IPv6.Address)
+		}
+		if len(dnsIPs) > 0 {
+			dnsProxy = sns.NewDNSProxy(dnsIPs)
+		}
+	}
+
 	// Transport handlers: dynamic forward tables + transparent routing.
-	fwdTcp := tcp.NewForwarder(s, 0, 10, sns.DynTcpRoutingHandler(state, g.fwdTable))
+	fwdTcp := tcp.NewForwarder(s, 0, 10, sns.DynTcpRoutingHandler(state, g.fwdTable, dnsProxy))
 	s.SetTransportProtocolHandler(tcp.ProtocolNumber, fwdTcp.HandlePacket)
-	fwdUdp := udp.NewForwarder(s, sns.DynUdpRoutingHandler(s, state, g.fwdTable))
+	fwdUdp := udp.NewForwarder(s, sns.DynUdpRoutingHandler(s, state, g.fwdTable, dnsProxy))
 	s.SetTransportProtocolHandler(udp.ProtocolNumber, fwdUdp.HandlePacket)
 
 	// Answer ICMP echo only for the gateway's own addresses.
