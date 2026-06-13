@@ -4,20 +4,21 @@
 export CGO_ENABLED = 0
 
 LDFLAGS := -s -w
+BUILDDIR := build
 
 .PHONY: build build-android build-linux-amd64 test vet check-static
 
 build:
-	go build ./cmd/gvswitch
+	go build -o $(BUILDDIR)/gvswitch ./cmd/gvswitch
 
 # Android (pKVM host) target: static linux/arm64 binary, no libc.
 build-android:
-	GOOS=linux GOARCH=arm64 go build -trimpath -ldflags "$(LDFLAGS)" -o gvswitch-android-arm64 ./cmd/gvswitch
-	$(MAKE) check-static BIN=gvswitch-android-arm64
+	GOOS=linux GOARCH=arm64 go build -trimpath -ldflags "$(LDFLAGS)" -o $(BUILDDIR)/gvswitch-android-arm64 ./cmd/gvswitch
+	$(MAKE) check-static BIN=$(BUILDDIR)/gvswitch-android-arm64
 
 build-linux-amd64:
-	GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "$(LDFLAGS)" -o gvswitch-linux-amd64 ./cmd/gvswitch
-	$(MAKE) check-static BIN=gvswitch-linux-amd64
+	GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "$(LDFLAGS)" -o $(BUILDDIR)/gvswitch-linux-amd64 ./cmd/gvswitch
+	$(MAKE) check-static BIN=$(BUILDDIR)/gvswitch-linux-amd64
 
 # Fails if the produced binary picked up dynamic linkage.
 check-static:

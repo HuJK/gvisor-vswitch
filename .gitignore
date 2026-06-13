@@ -1,7 +1,5 @@
 # Built binaries
-/gvswitch
-/gvswitch-android-arm64
-/gvswitch-linux-amd64
+/build/
 
 # slirpnetstack is a separate git checkout managed by sync-slirpnetstack.sh
 # (clone + package rename + overlay copy); run the script after cloning.
