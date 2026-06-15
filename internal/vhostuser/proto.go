@@ -46,6 +46,7 @@ const (
 const (
 	featNetMrgRxbuf      = 1 << 15 // VIRTIO_NET_F_MRG_RXBUF
 	featVersion1         = 1 << 32 // VIRTIO_F_VERSION_1
+	featAccessPlatform   = 1 << 33 // VIRTIO_F_ACCESS_PLATFORM
 	featProtocolFeatures = 1 << 30 // VHOST_USER_F_PROTOCOL_FEATURES
 )
 

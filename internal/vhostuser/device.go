@@ -43,6 +43,7 @@ type NetDevice struct {
 
 	mu            sync.Mutex
 	features      uint64
+	offered       uint64 // features we advertise (supportedFeatures [+ ACCESS_PLATFORM])
 	protoFeatures uint64
 	protoOn       bool // VHOST_USER_F_PROTOCOL_FEATURES negotiated
 	mem           *memTable
@@ -54,10 +55,22 @@ type NetDevice struct {
 
 // NewNetDevice starts serving the vhost-user protocol on conn. The session
 // runs until the connection drops or Close is called.
-func NewNetDevice(conn *net.UnixConn, h Handlers) *NetDevice {
+//
+// accessPlatform advertises VIRTIO_F_ACCESS_PLATFORM. Enable it only for
+// protected/pVM front-ends (e.g. crosvm on gunyah) where the guest must route
+// virtio DMA through the platform DMA API so buffers land in the host-visible
+// shared (swiotlb) region we can map. Leave it off for QEMU/normal front-ends:
+// there ACCESS_PLATFORM means a vIOMMU and the front-end would demand the
+// IOTLB/backend-req protocol we do not implement.
+func NewNetDevice(conn *net.UnixConn, accessPlatform bool, h Handlers) *NetDevice {
+	offered := uint64(supportedFeatures)
+	if accessPlatform {
+		offered |= featAccessPlatform
+	}
 	d := &NetDevice{
 		conn:     conn,
 		handlers: h,
+		offered:  offered,
 		closed:   make(chan struct{}),
 	}
 	for i := range d.rings {
@@ -130,12 +143,18 @@ func (d *NetDevice) handle(m *message) error {
 
 	switch m.req {
 	case reqGetFeatures:
-		reply, hasReply = u64Payload(supportedFeatures), true
+		reply, hasReply = u64Payload(d.offered), true
 
 	case reqSetFeatures:
 		if len(m.payload) >= 8 {
-			d.features = binary.LittleEndian.Uint64(m.payload)
-			d.protoOn = d.features&featProtocolFeatures != 0
+			feats := binary.LittleEndian.Uint64(m.payload)
+			// Reject any bit we did not offer (matches rust-vmm set_features).
+			if feats&^d.offered != 0 {
+				err = fmt.Errorf("set_features: unsupported bits %#x", feats&^d.offered)
+			} else {
+				d.features = feats
+				d.protoOn = d.features&featProtocolFeatures != 0
+			}
 		}
 
 	case reqGetProtocolFeatures:
@@ -204,6 +223,11 @@ func (d *NetDevice) handle(m *message) error {
 		err = d.setVringFDLocked(m, false)
 
 	case reqSetVringEnable:
+		// QEMU's vhost-user-net disables rings (SET_VRING_ENABLE 0) during
+		// its init phase, before SET_FEATURES is sent, so we must NOT gate
+		// this on protocol-feature negotiation (rust-vmm's check_feature
+		// gate rejects that legitimate early call). evalRingLocked already
+		// honors v.enabled, so accepting it unconditionally is correct.
 		var idx, on uint32
 		if idx, on, err = vringStatePayload(m.payload); err == nil {
 			if v := d.ring(idx); v != nil {

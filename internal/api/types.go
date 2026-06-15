@@ -50,6 +50,9 @@ type PortRequest struct {
 	Remote string `json:"remote,omitempty"`
 	// ReplacingMode: server only; replace (default) | occupy | multiplex.
 	ReplacingMode string `json:"replacing_mode,omitempty"`
+	// AccessPlatform: vhost-user only; advertise VIRTIO_F_ACCESS_PLATFORM for
+	// protected/pVM front-ends (e.g. crosvm on gunyah).
+	AccessPlatform bool `json:"access_platform,omitempty"`
 	// TapName / Bridge: tap and tapbr transports.
 	TapName string `json:"tap_name,omitempty"`
 	Bridge  string `json:"bridge,omitempty"`

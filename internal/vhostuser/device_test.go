@@ -286,7 +286,7 @@ func TestVhostUserTXAndRX(t *testing.T) {
 
 	frames := make(chan []byte, 16)
 	states := make(chan bool, 16)
-	dev := NewNetDevice(devConn, Handlers{
+	dev := NewNetDevice(devConn, false, Handlers{
 		Frame: func(f []byte) { frames <- f },
 		State: func(up bool) { states <- up },
 	})
@@ -394,7 +394,7 @@ func TestVhostUserEnableResumesPendingTX(t *testing.T) {
 
 	frames := make(chan []byte, 16)
 	states := make(chan bool, 16)
-	dev := NewNetDevice(devConn, Handlers{
+	dev := NewNetDevice(devConn, false, Handlers{
 		Frame: func(f []byte) { frames <- f },
 		State: func(up bool) { states <- up },
 	})
@@ -454,7 +454,7 @@ func TestVhostUserEnableResumesPendingTX(t *testing.T) {
 func TestVhostUserMemTable32Regions(t *testing.T) {
 	fe, devConn := newFakeFrontEnd(t)
 
-	dev := NewNetDevice(devConn, Handlers{})
+	dev := NewNetDevice(devConn, false, Handlers{})
 	defer dev.Close()
 
 	fe.send(reqGetFeatures, nil)
@@ -489,7 +489,7 @@ func TestVhostUserMemTable32Regions(t *testing.T) {
 func TestVhostUserBadGetVringBaseClosesSession(t *testing.T) {
 	fe, devConn := newFakeFrontEnd(t)
 
-	dev := NewNetDevice(devConn, Handlers{})
+	dev := NewNetDevice(devConn, false, Handlers{})
 	defer dev.Close()
 
 	fe.send(reqGetVringBase, u32u32(99, 0))
@@ -506,7 +506,7 @@ func TestVhostUserSessionTeardown(t *testing.T) {
 	fe, devConn := newFakeFrontEnd(t)
 
 	states := make(chan bool, 16)
-	dev := NewNetDevice(devConn, Handlers{
+	dev := NewNetDevice(devConn, false, Handlers{
 		State: func(up bool) { states <- up },
 	})
 	defer dev.Close()

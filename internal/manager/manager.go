@@ -92,10 +92,11 @@ func (m *Manager) CreatePort(req api.PortRequest) (api.PortInfo, error) {
 			path = req.Remote
 		}
 		port, err = ports.NewVhostUser(m.sw, ports.VhostUserConfig{
-			ID:            req.Identifier,
-			Mode:          req.Mode,
-			Path:          path,
-			ReplacingMode: ports.ReplacingMode(req.ReplacingMode),
+			ID:             req.Identifier,
+			Mode:           req.Mode,
+			Path:           path,
+			ReplacingMode:  ports.ReplacingMode(req.ReplacingMode),
+			AccessPlatform: req.AccessPlatform,
 		})
 		if err != nil {
 			return api.PortInfo{}, err

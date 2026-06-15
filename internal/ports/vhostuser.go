@@ -22,13 +22,19 @@ type VhostUserConfig struct {
 	// (client).
 	Path          string
 	ReplacingMode ReplacingMode // server only: replace | occupy
+	// AccessPlatform advertises VIRTIO_F_ACCESS_PLATFORM to the front-end.
+	// Required for protected/pVM front-ends (crosvm on gunyah) so the guest
+	// routes virtio DMA through the platform DMA API into the host-visible
+	// shared (swiotlb) region. Leave false for QEMU/normal front-ends.
+	AccessPlatform bool
 }
 
 type vhostUserPort struct {
-	id   string
-	sw   *switchcore.Switch
-	ref  *switchcore.PortRef
-	mode ReplacingMode
+	id             string
+	sw             *switchcore.Switch
+	ref            *switchcore.PortRef
+	mode           ReplacingMode
+	accessPlatform bool
 
 	ln net.Listener // server mode
 
@@ -41,7 +47,7 @@ type vhostUserPort struct {
 
 // NewVhostUser creates a vhost-user backend port.
 func NewVhostUser(sw *switchcore.Switch, cfg VhostUserConfig) (ManagedPort, error) {
-	p := &vhostUserPort{id: cfg.ID, sw: sw, ref: sw.Ref(cfg.ID), mode: cfg.ReplacingMode}
+	p := &vhostUserPort{id: cfg.ID, sw: sw, ref: sw.Ref(cfg.ID), mode: cfg.ReplacingMode, accessPlatform: cfg.AccessPlatform}
 
 	switch cfg.Mode {
 	case "client":
@@ -113,7 +119,7 @@ func (p *vhostUserPort) adopt(conn *net.UnixConn) {
 	defer p.mu.Unlock()
 
 	var dev *vhostuser.NetDevice
-	dev = vhostuser.NewNetDevice(conn, vhostuser.Handlers{
+	dev = vhostuser.NewNetDevice(conn, p.accessPlatform, vhostuser.Handlers{
 		Frame: func(frame []byte) {
 			p.ref.Deliver(frame)
 		},
